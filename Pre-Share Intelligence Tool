@@ -1,0 +1,72 @@
+from flask import Flask, render_template, request, jsonify
+import pickle
+import re
+import string
+
+app = Flask(__name__)
+
+# 1. Load your saved pipeline from Colab [cite: 96, 97]
+with open('news_classifier_pipeline.pkl', 'rb') as f:
+    model_pipeline = pickle.load(f)
+
+def clean_text(text):
+    """Cleaning logic from your project [cite: 140-144]"""
+    text = text.lower()
+    # Removes URLs and brackets [cite: 142]
+    text = re.sub(r'\[.*?] | [hH] [tT] [tT] [pP] [SS]?://\S+ [wW] [wW] [wW]', '', text)
+    # Removes punctuation and numbers [cite: 143]
+    text = re.sub(r' [%s]' % re.escape(string.punctuation), '', text)
+    text = re.sub(r'\n|\w*\d\w*', '', text)
+    return text
+
+@app.route('/')
+def home():
+    return render_template('index.html')
+
+@app.route('/predict', methods=['POST'])
+def predict():
+    data = request.get_json()
+    raw_text = data.get("text", "")
+    
+    if not raw_text:
+        return jsonify({"error": "No text provided"}), 400
+
+    # Step 1: Clean [cite: 156]
+    cleaned_content = clean_text(raw_text)
+    
+    # Step 2: Prediction and Confidence [cite: 157-159]
+    prediction = model_pipeline.predict([cleaned_content])[0]
+    label = "REAL" if prediction == 1 else "FAKE"
+    
+    # Using the probability logic from your advanced_inference [cite: 159, 173]
+    try:
+        prob = model_pipeline.predict_proba([cleaned_content])[0]
+        confidence = f"{prob[1] * 100 if prediction == 1 else prob[0] * 100:.2f}%"
+    except:
+        confidence = "N/A"
+
+    # Step 3: Keyword Highlighting (Top 5 keywords) [cite: 160-174]
+    try:
+        tfidf = model_pipeline.named_steps['tfidf']
+        classifier = model_pipeline.named_steps['clf'] # or 'classifier' depending on your pipeline
+        words = tfidf.get_feature_names_out()
+        weights = classifier.coef_[0]
+        
+        word_importance = {words[i]: weights[i] for i in range(len(words))}
+        tokens = cleaned_content.split()
+        impact_words = {w: word_importance[w] for w in tokens if w in word_importance}
+        
+        # Sort based on label [cite: 168, 169]
+        top_keywords = sorted(impact_words.items(), key=lambda x: x[1], reverse=(prediction == 1))[:5]
+        keywords = [kw[0] for kw in top_keywords]
+    except:
+        keywords = []
+
+    return jsonify({
+        "label": label,
+        "confidence": confidence,
+        "keywords": keywords
+    })
+
+if __name__ == '__main__':
+    app.run(debug=True)
